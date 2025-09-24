@@ -1,3 +1,6 @@
+console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, reorderable panel');
+
+
 (() => {
   'use strict';
 
