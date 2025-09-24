@@ -4,10 +4,10 @@
   const STORAGE_KEY = 'sticky_notes_global_v2';
   const MAX_NOTES = 10;
   const COLORS = ['#fff899', '#c1e7ff', '#d0f0c0', '#ffdbea', '#ffe0b3'];
-  const MIN_OPACITY = 0.1;
-  const MAX_OPACITY = 0.90;
+  const MIN_OPACITY = 0.90;
+  const MAX_OPACITY = 0.95; // ← Prevent invisibility. Adjustable.
 
-  let overlay, panel, addButton, panelToggle, isPanelOpen = false;
+  let overlay, panel, addButton, panelToggle, controlBar, isPanelOpen = false;
   let nextColorIndex = 0;
 
   // Load global state
@@ -17,9 +17,19 @@
       if (saved) {
         const state = JSON.parse(saved);
         nextColorIndex = state.nextColorIndex || 0;
-        if (panel) {
-          if (state.panelLeft) panel.style.left = state.panelLeft;
-          if (state.panelTop) panel.style.top = state.panelTop;
+
+        // Restore panel position
+        if (panel && state.panelLeft !== undefined) {
+          panel.style.left = state.panelLeft + 'px';
+          panel.style.top = state.panelTop + 'px';
+        }
+
+        // Restore control bar position
+        if (controlBar && state.controlLeft !== undefined) {
+          controlBar.style.right = 'auto';
+          controlBar.style.bottom = 'auto';
+          controlBar.style.left = state.controlLeft + 'px';
+          controlBar.style.top = state.controlTop + 'px';
         }
       }
     } catch (e) {
@@ -31,8 +41,10 @@
     try {
       const state = {
         nextColorIndex,
-        panelLeft: panel?.style.left || 'unset',
-        panelTop: panel?.style.top || 'unset'
+        panelLeft: panel ? parseInt(panel.style.left) || window.innerWidth - 240 : undefined,
+        panelTop: panel ? parseInt(panel.style.top) || 80 : undefined,
+        controlLeft: controlBar ? parseInt(controlBar.style.left) || window.innerWidth - 100 : undefined,
+        controlTop: controlBar ? parseInt(controlBar.style.top) || window.innerHeight - 80 : undefined
       };
       localStorage.setItem(STORAGE_KEY + '_state', JSON.stringify(state));
     } catch (e) {
@@ -126,6 +138,33 @@
     const list = document.createElement('div');
     list.className = 'notes-list';
     list.style.cssText = 'padding: 10px; max-height: calc(70vh - 60px); overflow-y: auto;';
+    list.addEventListener('dragover', (e) => {
+      e.preventDefault();
+    });
+    list.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const draggedId = e.dataTransfer.getData('text/plain');
+      const targetEl = e.target.closest('.note-item');
+      const draggedEl = document.querySelector(`[data-drag-id="${draggedId}"]`);
+      if (!draggedEl || !targetEl) return;
+
+      const allItems = Array.from(list.querySelectorAll('.note-item'));
+      const draggedIdx = allItems.indexOf(draggedEl);
+      const targetIdx = allItems.indexOf(targetEl);
+
+      if (draggedIdx === -1 || targetIdx === -1 || draggedIdx === targetIdx) return;
+
+      // Physically reorder in DOM
+      if (draggedIdx < targetIdx) {
+        list.insertBefore(draggedEl, targetEl.nextSibling);
+      } else {
+        list.insertBefore(draggedEl, targetEl);
+      }
+
+      // Reorder actual notes to match panel
+      reorderNotesByPanel();
+      saveNotes();
+    });
     p.appendChild(list);
 
     // New Note button
@@ -160,6 +199,24 @@
     return p;
   };
 
+  // Reorder actual notes array to match panel display order
+  const reorderNotesByPanel = () => {
+    const list = panel.querySelector('.notes-list');
+    const itemEls = list.querySelectorAll('.note-item');
+    const orderedIds = Array.from(itemEls).map(el => el.dataset.noteId);
+
+    const fragment = document.createDocumentFragment();
+    orderedIds.forEach(id => {
+      const note = document.querySelector(`.sticky-bookmark-note[data-id="${id}"]`);
+      if (note) fragment.appendChild(note);
+    });
+
+    while (overlay.firstChild) {
+      overlay.removeChild(overlay.firstChild);
+    }
+    overlay.appendChild(fragment);
+  };
+
   // Update panel content
   const updatePanel = () => {
     if (!panel) return;
@@ -167,12 +224,16 @@
     list.innerHTML = '';
     document.querySelectorAll('.sticky-bookmark-note').forEach(note => {
       const item = document.createElement('div');
+      item.className = 'note-item';
+      item.dataset.noteId = note.dataset.id;
+      item.draggable = true;
+
       item.style.cssText = `
         padding: 8px;
         margin: 6px 0;
         background: #f9f9f9;
         border-radius: 6px;
-        cursor: pointer;
+        cursor: grab;
         position: relative;
         border: 1px solid #eee;
       `;
@@ -184,6 +245,18 @@
         <div style="font-size:11px; color:#777; margin-top:2px;">Double-click to open</div>
         <button class="kebab" style="position:absolute; top:8px; right:8px; background:none; border:none; font-size:18px; cursor:pointer;">⋯</button>
       `;
+
+      // Drag setup
+      item.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData('text/plain', note.dataset.id);
+        item.style.opacity = '0.7';
+        item.dataset.dragId = note.dataset.id; // for drop targeting
+      });
+
+      item.addEventListener('dragend', () => {
+        item.style.opacity = '1';
+        delete item.dataset.dragId;
+      });
 
       const kebab = item.querySelector('.kebab');
       kebab.addEventListener('click', (e) => {
@@ -200,7 +273,6 @@
 
       item.addEventListener('click', (e) => {
         if (e.target === kebab) return;
-        // Single click: highlight
         document.querySelectorAll('.sticky-bookmark-note').forEach(n => n.style.outline = 'none');
         note.style.outline = '2px solid #00aaff';
         setTimeout(() => note.style.outline = 'none', 1500);
@@ -238,14 +310,12 @@
 
     document.body.appendChild(menu);
 
-    // Close menu on outside click
     const closeMenu = () => {
       menu.remove();
       document.removeEventListener('click', closeMenu);
     };
     setTimeout(() => document.addEventListener('click', closeMenu), 0);
 
-    // Menu actions
     menu.querySelector('.menu-open').addEventListener('click', () => {
       note.style.display = 'flex';
       note.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -278,7 +348,7 @@
       const slider = document.createElement('input');
       slider.type = 'range';
       slider.min = MIN_OPACITY * 100;
-      slider.max = MAX_OPACITY * 100;
+      slider.max = MAX_OPACITY * 100; // ← Max 95%
       slider.value = opacity * 100;
       slider.step = 1;
       slider.style.cssText = 'width:100%; margin-top:6px;';
@@ -314,17 +384,22 @@
     if (isPanelOpen) updatePanel();
   };
 
-  // Create floating ➕ and ▲ buttons
+  // Create floating ➕ and ▲ buttons inside draggable container
   const createFloatingControls = () => {
-    const container = document.createElement('div');
-    Object.assign(container.style, {
+    controlBar = document.createElement('div');
+    Object.assign(controlBar.style, {
       position: 'fixed',
       bottom: '20px',
       right: '20px',
       zIndex: '2147483648',
       pointerEvents: 'auto',
       display: 'flex',
-      gap: '8px'
+      gap: '8px',
+      padding: '6px',
+      background: 'rgba(255,255,255,0.8)',
+      borderRadius: '24px',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+      cursor: 'move'
     });
 
     addButton = document.createElement('button');
@@ -368,9 +443,40 @@
 
     panelToggle.addEventListener('click', togglePanel);
 
-    container.appendChild(addButton);
-    container.appendChild(panelToggle);
-    document.body.appendChild(container);
+    // Make entire control bar draggable
+    let isDragging = false, startX, startY, initialLeft, initialTop;
+    controlBar.addEventListener('mousedown', (e) => {
+      if (e.target.tagName === 'BUTTON') return; // Let buttons handle their own clicks
+      e.preventDefault();
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      initialLeft = parseInt(controlBar.style.left) || window.innerWidth - parseInt(controlBar.style.right || 100) - controlBar.offsetWidth;
+      initialTop = parseInt(controlBar.style.top) || window.innerHeight - parseInt(controlBar.style.bottom || 20) - controlBar.offsetHeight;
+      document.addEventListener('mousemove', dragMove);
+      document.addEventListener('mouseup', dragEnd);
+    });
+
+    const dragMove = (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      controlBar.style.left = (initialLeft + dx) + 'px';
+      controlBar.style.top = (initialTop + dy) + 'px';
+      controlBar.style.right = 'auto';
+      controlBar.style.bottom = 'auto';
+    };
+
+    const dragEnd = () => {
+      isDragging = false;
+      document.removeEventListener('mousemove', dragMove);
+      document.removeEventListener('mouseup', dragEnd);
+      saveGlobalState();
+    };
+
+    controlBar.appendChild(addButton);
+    controlBar.appendChild(panelToggle);
+    document.body.appendChild(controlBar);
   };
 
   // Escape HTML for safe insertion
@@ -416,7 +522,7 @@
         <input class="sticky-note-title" type="text" placeholder="Note Title" value="${escapeHtml(title)}" style="flex:1; background:transparent; border:none; outline:none; font-weight:bold; font-size:13px; padding:2px 4px; margin-right:6px;"/>
         <div style="display:flex; align-items:center; gap:4px;">
           <button class="btn-toggle" style="background:none;border:none;font-size:16px;cursor:pointer;color:#555;" title="${isCollapsed ? 'Expand' : 'Collapse'}">${isCollapsed ? '▲' : '▼'}</button>
-          <button class="btn-minimize" style="background:none;border:none;font-size:16px;cursor:pointer;color:#555;" title="Minimize">_</button>
+          <button class="btn-minimize" style="background:none;border:none;font-size:18px;cursor:pointer;color:#555;" title="Minimize">_</button>
         </div>
       </div>
       <div class="sticky-note-content" contenteditable="true" style="flex:1;padding:10px;outline:none;overflow:auto;resize:none;background:transparent;user-select:text;cursor:text;border:none;${isCollapsed ? 'display:none;' : ''}"></div>
@@ -602,7 +708,7 @@
       };
     });
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    saveGlobalState(); // also saves nextColorIndex
+    saveGlobalState();
   };
 
   // Load notes from localStorage
@@ -627,6 +733,8 @@
       .sticky-note-header button { background:none; border:none; font-size:16px; cursor:pointer; color:#555; padding:2px 4px; }
       .sticky-note-content { flex:1; padding:10px; outline:none; overflow:auto; resize:none; background:transparent; user-select:text; cursor:text; border:none; }
       .sticky-notes-panel { position:fixed; top:80px; right:20px; width:220px; max-height:70vh; background:#fafafa; border:1px solid #ddd; border-radius:8px; box-shadow:0 2px 10px rgba(0,0,0,0.15); padding:0; overflow:hidden; z-index:2147483648; pointer-events:auto; display:none; font-size:13px; font-family:system-ui,sans-serif; }
+      .note-item { cursor: grab; }
+      .note-item:active { cursor: grabbing; }
     `;
     document.head.appendChild(style);
   };
