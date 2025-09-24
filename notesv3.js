@@ -1,17 +1,17 @@
-console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, reorderable panel');
-
+console.log('NotesV3 Loaded — Enhanced UX, Copy, Z-Index, Color Picker, Close All');
 
 (() => {
   'use strict';
 
   const STORAGE_KEY = 'sticky_notes_global_v2';
   const MAX_NOTES = 10;
-  const COLORS = ['#fff899', '#c1e7ff', '#d0f0c0', '#ffdbea', '#ffe0b3'];
-  const MIN_OPACITY = 0.90;
-  const MAX_OPACITY = 0.95; // ← Prevent invisibility. Adjustable.
+  const COLORS = ['#fff899', '#c1e7ff', '#d0f0c0', '#ffdbea', '#ffe0b3', '#d9a7ff', '#a8dadc', '#fca311'];
+  const MIN_OPACITY = 0.01; // 1%
+  const MAX_OPACITY = 0.99; // 99%
 
   let overlay, panel, addButton, panelToggle, controlBar, isPanelOpen = false;
   let nextColorIndex = 0;
+  let zIndexCounter = 2147483647 + 10; // Start above base
 
   // Load global state
   const loadGlobalState = () => {
@@ -21,13 +21,11 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
         const state = JSON.parse(saved);
         nextColorIndex = state.nextColorIndex || 0;
 
-        // Restore panel position
         if (panel && state.panelLeft !== undefined) {
           panel.style.left = state.panelLeft + 'px';
           panel.style.top = state.panelTop + 'px';
         }
 
-        // Restore control bar position
         if (controlBar && state.controlLeft !== undefined) {
           controlBar.style.right = 'auto';
           controlBar.style.bottom = 'auto';
@@ -88,7 +86,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       boxShadow: '0 2px 10px rgba(0,0,0,0.15)',
       padding: '0',
       overflow: 'hidden',
-      zIndex: '2147483648',
+      zIndex: '2147483650', // ↑ Always above notes
       pointerEvents: 'auto',
       display: 'none',
       fontSize: '13px',
@@ -157,14 +155,12 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
 
       if (draggedIdx === -1 || targetIdx === -1 || draggedIdx === targetIdx) return;
 
-      // Physically reorder in DOM
       if (draggedIdx < targetIdx) {
         list.insertBefore(draggedEl, targetEl.nextSibling);
       } else {
         list.insertBefore(draggedEl, targetEl);
       }
 
-      // Reorder actual notes to match panel
       reorderNotesByPanel();
       saveNotes();
     });
@@ -189,7 +185,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
         alert(`Max ${MAX_NOTES} notes allowed.`);
         return;
       }
-      const note = createNote(null, null, null, null, null, null, '', nextColorIndex, false, 1.0);
+      const note = createNote(null, null, null, null, null, '', '', nextColorIndex, false, 1.0);
       nextColorIndex = (nextColorIndex + 1) % COLORS.length;
       overlay.appendChild(note);
       saveNotes();
@@ -245,7 +241,6 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       const noteTitle = titleEl.value || '(untitled)';
       item.innerHTML = `
         <div style="font-weight:500; font-size:13px;">${escapeHtml(noteTitle)}</div>
-        <div style="font-size:11px; color:#777; margin-top:2px;">Double-click to open</div>
         <button class="kebab" style="position:absolute; top:8px; right:8px; background:none; border:none; font-size:18px; cursor:pointer;">⋯</button>
       `;
 
@@ -253,7 +248,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       item.addEventListener('dragstart', (e) => {
         e.dataTransfer.setData('text/plain', note.dataset.id);
         item.style.opacity = '0.7';
-        item.dataset.dragId = note.dataset.id; // for drop targeting
+        item.dataset.dragId = note.dataset.id;
       });
 
       item.addEventListener('dragend', () => {
@@ -264,7 +259,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       const kebab = item.querySelector('.kebab');
       kebab.addEventListener('click', (e) => {
         e.stopPropagation();
-        showNoteMenu(e, note, item);
+        showNoteMenu(e, note, item, kebab);
       });
 
       item.addEventListener('dblclick', () => {
@@ -276,6 +271,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
 
       item.addEventListener('click', (e) => {
         if (e.target === kebab) return;
+        bringToFront(note);
         document.querySelectorAll('.sticky-bookmark-note').forEach(n => n.style.outline = 'none');
         note.style.outline = '2px solid #00aaff';
         setTimeout(() => note.style.outline = 'none', 1500);
@@ -285,13 +281,18 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
     });
   };
 
-  // Show note options menu
-  const showNoteMenu = (e, note, panelItem) => {
+  // Show note options menu BELOW the kebab button
+  const showNoteMenu = (e, note, panelItem, triggerBtn) => {
+    // Close any existing menus
+    document.querySelectorAll('.note-context-menu').forEach(m => m.remove());
+
+    const rect = triggerBtn.getBoundingClientRect();
     const menu = document.createElement('div');
+    menu.className = 'note-context-menu';
     menu.style.cssText = `
       position: absolute;
-      top: ${e.clientY - panel.getBoundingClientRect().top + window.scrollY}px;
-      left: ${e.clientX - panel.getBoundingClientRect().left + window.scrollX - 150}px;
+      top: ${rect.bottom + window.scrollY + 4}px;
+      left: ${rect.left + window.scrollX}px;
       background: white;
       border: 1px solid #ccc;
       border-radius: 6px;
@@ -299,7 +300,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       padding: 8px;
       z-index: 2147483649;
       font-size: 13px;
-      min-width: 160px;
+      min-width: 180px;
     `;
 
     const opacity = parseFloat(note.style.opacity) || 1.0;
@@ -308,7 +309,10 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       <div style="padding:6px 10px; cursor:pointer; border-radius:4px;" class="menu-open">🔍 Open Note</div>
       <div style="padding:6px 10px; cursor:pointer; border-radius:4px;" class="menu-color">🎨 Change Color</div>
       <div style="padding:6px 10px; cursor:pointer; border-radius:4px;" class="menu-opacity">💧 Transparency: ${Math.round(opacity * 100)}%</div>
+      <div style="padding:6px 10px; cursor:pointer; border-radius:4px; color:#0078d4;" class="menu-copy">📋 Copy to Clipboard</div>
       <div style="padding:6px 10px; cursor:pointer; border-radius:4px; color:red;" class="menu-delete">🗑️ Delete Note</div>
+      <hr style="margin:6px 0; border:0; border-top:1px solid #eee;">
+      <div style="padding:6px 10px; cursor:pointer; border-radius:4px; color:red; font-weight:bold;" class="menu-close-all">⚠️ Close All Notes</div>
     `;
 
     document.body.appendChild(menu);
@@ -328,30 +332,47 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
     });
 
     menu.querySelector('.menu-color').addEventListener('click', () => {
-      const colorPicker = document.createElement('select');
-      colorPicker.style.cssText = 'width:100%; padding:4px; margin-top:6px; border-radius:4px;';
+      const colorContainer = document.createElement('div');
+      colorContainer.style.cssText = 'display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; padding-top:8px; border-top:1px solid #eee;';
+
+      // Preset colors
       COLORS.forEach((color, idx) => {
-        const opt = document.createElement('option');
-        opt.value = idx;
-        opt.textContent = `Color ${idx + 1}`;
-        if (note.style.backgroundColor === color) opt.selected = true;
-        colorPicker.appendChild(opt);
+        const swatch = document.createElement('div');
+        swatch.style.cssText = `
+          width: 24px; height: 24px; border-radius: 50%; background: ${color};
+          cursor: pointer; border: 2px solid transparent;
+          ${note.style.backgroundColor === color ? 'border-color: #000;' : ''}
+        `;
+        swatch.addEventListener('click', () => {
+          note.style.backgroundColor = color;
+          saveNotes();
+          closeMenu(); // Auto-close after selection
+        });
+        colorContainer.appendChild(swatch);
       });
 
-      colorPicker.addEventListener('change', () => {
-        const idx = parseInt(colorPicker.value);
-        note.style.backgroundColor = COLORS[idx];
+      // Custom color picker
+      const customPicker = document.createElement('input');
+      customPicker.type = 'color';
+      customPicker.value = note.style.backgroundColor || COLORS[0];
+      customPicker.style.cssText = 'width:24px; height:24px; border:none; cursor:pointer; margin-left:6px;';
+      customPicker.addEventListener('input', () => {
+        note.style.backgroundColor = customPicker.value;
         saveNotes();
       });
+      customPicker.addEventListener('change', () => {
+        closeMenu(); // Close on final pick
+      });
 
-      menu.appendChild(colorPicker);
+      colorContainer.appendChild(customPicker);
+      menu.appendChild(colorContainer);
     });
 
     menu.querySelector('.menu-opacity').addEventListener('click', () => {
       const slider = document.createElement('input');
       slider.type = 'range';
       slider.min = MIN_OPACITY * 100;
-      slider.max = MAX_OPACITY * 100; // ← Max 95%
+      slider.max = MAX_OPACITY * 100;
       slider.value = opacity * 100;
       slider.step = 1;
       slider.style.cssText = 'width:100%; margin-top:6px;';
@@ -366,6 +387,20 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       menu.appendChild(slider);
     });
 
+    menu.querySelector('.menu-copy').addEventListener('click', async () => {
+      const titleEl = note.querySelector('.sticky-note-title');
+      const contentEl = note.querySelector('.sticky-note-content');
+      const text = `[${titleEl.value || 'Untitled'}]\n\n${contentEl.innerText}`;
+
+      try {
+        await navigator.clipboard.writeText(text);
+        showCopiedToast(note);
+      } catch (err) {
+        console.error('Failed to copy: ', err);
+      }
+      closeMenu();
+    });
+
     menu.querySelector('.menu-delete').addEventListener('click', () => {
       if (confirm('Delete this note permanently?')) {
         note.remove();
@@ -374,6 +409,61 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       }
       closeMenu();
     });
+
+    menu.querySelector('.menu-close-all').addEventListener('click', () => {
+      if (confirm('⚠️ Close ALL notes? This will hide them until you reopen via panel.')) {
+        document.querySelectorAll('.sticky-bookmark-note').forEach(n => n.style.display = 'none');
+        if (isPanelOpen) updatePanel();
+      }
+      closeMenu();
+    });
+  };
+
+  // Show "Copied!" toast above note
+  const showCopiedToast = (note) => {
+    const toast = document.createElement('div');
+    toast.textContent = '✅ Copied!';
+    toast.style.cssText = `
+      position: absolute;
+      top: -36px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #4CAF50;
+      color: white;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 2147483649;
+      animation: fadeOut 1.5s forwards;
+    `;
+
+    const keyframes = `
+      @keyframes fadeOut {
+        0% { opacity: 1; transform: translateX(-50%) translateY(0); }
+        70% { opacity: 1; }
+        100% { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+      }
+    `;
+
+    // Inject keyframes once
+    if (!document.getElementById('copy-toast-keyframes')) {
+      const style = document.createElement('style');
+      style.id = 'copy-toast-keyframes';
+      style.textContent = keyframes;
+      document.head.appendChild(style);
+    }
+
+    note.appendChild(toast);
+    setTimeout(() => {
+      if (toast.parentNode) toast.remove();
+    }, 1600);
+  };
+
+  // Bring clicked note to front
+  const bringToFront = (note) => {
+    note.style.zIndex = zIndexCounter++;
   };
 
   // Toggle panel visibility
@@ -394,7 +484,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       position: 'fixed',
       bottom: '20px',
       right: '20px',
-      zIndex: '2147483648',
+      zIndex: '2147483651', // ↑ Above panel and notes
       pointerEvents: 'auto',
       display: 'flex',
       gap: '8px',
@@ -436,7 +526,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
         alert(`Max ${MAX_NOTES} notes allowed.`);
         return;
       }
-      const note = createNote(null, null, null, null, null, null, '', nextColorIndex, false, 1.0);
+      const note = createNote(null, null, null, null, null, '', '', nextColorIndex, false, 1.0);
       nextColorIndex = (nextColorIndex + 1) % COLORS.length;
       overlay.appendChild(note);
       saveNotes();
@@ -449,7 +539,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
     // Make entire control bar draggable
     let isDragging = false, startX, startY, initialLeft, initialTop;
     controlBar.addEventListener('mousedown', (e) => {
-      if (e.target.tagName === 'BUTTON') return; // Let buttons handle their own clicks
+      if (e.target.tagName === 'BUTTON') return;
       e.preventDefault();
       isDragging = true;
       startX = e.clientX;
@@ -511,7 +601,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       pointerEvents: 'auto',
       cursor: 'default',
       userSelect: 'none',
-      zIndex: '2147483647',
+      zIndex: zIndexCounter++,
       display: 'flex',
       flexDirection: 'column',
       fontSize: '14px',
@@ -526,6 +616,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
         <div style="display:flex; align-items:center; gap:4px;">
           <button class="btn-toggle" style="background:none;border:none;font-size:16px;cursor:pointer;color:#555;" title="${isCollapsed ? 'Expand' : 'Collapse'}">${isCollapsed ? '▲' : '▼'}</button>
           <button class="btn-minimize" style="background:none;border:none;font-size:18px;cursor:pointer;color:#555;" title="Minimize">_</button>
+          <button class="btn-copy" style="background:none;border:none;font-size:18px;cursor:pointer;color:#555;" title="Copy to Clipboard">📋</button>
         </div>
       </div>
       <div class="sticky-note-content" contenteditable="true" style="flex:1;padding:10px;outline:none;overflow:auto;resize:none;background:transparent;user-select:text;cursor:text;border:none;${isCollapsed ? 'display:none;' : ''}"></div>
@@ -536,12 +627,11 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
     const contentEl = n.querySelector('.sticky-note-content');
     const toggleBtn = n.querySelector('.btn-toggle');
     const minimizeBtn = n.querySelector('.btn-minimize');
+    const copyBtn = n.querySelector('.btn-copy');
 
-    // Load content if provided
     if (content) contentEl.innerHTML = content;
     else contentEl.innerHTML = '<p><br></p>';
 
-    // Toggle collapse/expand
     toggleBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       isCollapsed = !isCollapsed;
@@ -553,11 +643,26 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       saveNotes();
     });
 
-    // Minimize (hide) note
     minimizeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       n.style.display = 'none';
       if (isPanelOpen) updatePanel();
+    });
+
+    copyBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const text = `[${titleEl.value || 'Untitled'}]\n\n${contentEl.innerText}`;
+      try {
+        await navigator.clipboard.writeText(text);
+        showCopiedToast(n);
+      } catch (err) {
+        console.error('Failed to copy: ', err);
+      }
+    });
+
+    // Click anywhere on note → bring to front
+    n.addEventListener('mousedown', () => {
+      bringToFront(n);
     });
 
     // Draggable
@@ -589,7 +694,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       saveNotes();
     };
 
-    // Resizers (left, bottom, right)
+    // Resizers
     const addResizer = (dir, cursorStyle) => {
       const resizer = document.createElement('div');
       resizer.className = `resizer-${dir}`;
@@ -656,7 +761,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       addResizer(dir, cursor);
     });
 
-    // Auto-save on edit
+    // Auto-save
     let saveTimeout;
     const debouncedSave = () => {
       clearTimeout(saveTimeout);
@@ -689,7 +794,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
     return n;
   };
 
-  // Save all notes to localStorage
+  // Save all notes
   const saveNotes = () => {
     const notes = document.querySelectorAll('.sticky-bookmark-note');
     const data = Array.from(notes).map(n => {
@@ -714,7 +819,7 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
     saveGlobalState();
   };
 
-  // Load notes from localStorage
+  // Load notes
   const loadNotes = () => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return [];
@@ -735,14 +840,15 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       .sticky-note-header { padding:6px 10px; background:rgba(255,255,255,0.4); border-bottom:1px solid rgba(0,0,0,0.1); display:flex; justify-content:space-between; align-items:center; cursor:move; border-radius:8px 8px 0 0; }
       .sticky-note-header button { background:none; border:none; font-size:16px; cursor:pointer; color:#555; padding:2px 4px; }
       .sticky-note-content { flex:1; padding:10px; outline:none; overflow:auto; resize:none; background:transparent; user-select:text; cursor:text; border:none; }
-      .sticky-notes-panel { position:fixed; top:80px; right:20px; width:220px; max-height:70vh; background:#fafafa; border:1px solid #ddd; border-radius:8px; box-shadow:0 2px 10px rgba(0,0,0,0.15); padding:0; overflow:hidden; z-index:2147483648; pointer-events:auto; display:none; font-size:13px; font-family:system-ui,sans-serif; }
+      .sticky-notes-panel { position:fixed; top:80px; right:20px; width:220px; max-height:70vh; background:#fafafa; border:1px solid #ddd; border-radius:8px; box-shadow:0 2px 10px rgba(0,0,0,0.15); padding:0; overflow:hidden; z-index:2147483650; pointer-events:auto; display:none; font-size:13px; font-family:system-ui,sans-serif; }
       .note-item { cursor: grab; }
       .note-item:active { cursor: grabbing; }
+      .note-context-menu { font-family: system-ui, sans-serif; }
     `;
     document.head.appendChild(style);
   };
 
-  // Initialize everything
+  // Initialize
   const init = () => {
     if (document.querySelector('.sticky-bookmark-overlay')) return;
 
@@ -768,7 +874,6 @@ console.log('NotesV3 Loaded — Transparency capped at 95%, draggable controls, 
       overlay.appendChild(note);
     });
 
-    // Always create one default note if none exist
     if (savedNotes.length === 0) {
       const note = createNote();
       overlay.appendChild(note);
