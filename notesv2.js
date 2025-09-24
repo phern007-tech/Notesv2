@@ -4,8 +4,41 @@
   const STORAGE_KEY = 'sticky_notes_global_v2';
   const MAX_NOTES = 10;
   const COLORS = ['#fff899', '#c1e7ff', '#d0f0c0', '#ffdbea', '#ffe0b3'];
+  const MIN_OPACITY = 0.1;
+  const MAX_OPACITY = 0.90;
 
   let overlay, panel, addButton, panelToggle, isPanelOpen = false;
+  let nextColorIndex = 0;
+
+  // Load global state
+  const loadGlobalState = () => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY + '_state');
+      if (saved) {
+        const state = JSON.parse(saved);
+        nextColorIndex = state.nextColorIndex || 0;
+        if (panel) {
+          if (state.panelLeft) panel.style.left = state.panelLeft;
+          if (state.panelTop) panel.style.top = state.panelTop;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load global state');
+    }
+  };
+
+  const saveGlobalState = () => {
+    try {
+      const state = {
+        nextColorIndex,
+        panelLeft: panel?.style.left || 'unset',
+        panelTop: panel?.style.top || 'unset'
+      };
+      localStorage.setItem(STORAGE_KEY + '_state', JSON.stringify(state));
+    } catch (e) {
+      console.warn('Failed to save global state');
+    }
+  };
 
   // Create global overlay
   const createOverlay = () => {
@@ -30,16 +63,16 @@
     p.className = 'sticky-notes-panel';
     Object.assign(p.style, {
       position: 'fixed',
-      top: '60px',
+      top: '80px',
       right: '20px',
-      width: '200px',
+      width: '220px',
       maxHeight: '70vh',
       backgroundColor: '#fafafa',
       border: '1px solid #ddd',
       borderRadius: '8px',
       boxShadow: '0 2px 10px rgba(0,0,0,0.15)',
-      padding: '10px',
-      overflowY: 'auto',
+      padding: '0',
+      overflow: 'hidden',
       zIndex: '2147483648',
       pointerEvents: 'auto',
       display: 'none',
@@ -47,27 +80,79 @@
       fontFamily: 'system-ui, sans-serif'
     });
 
+    // Panel Header (draggable)
     const header = document.createElement('div');
-    header.textContent = 'My Notes';
-    header.style.cssText = 'font-weight:bold; margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid #eee;';
+    header.textContent = '📌 My Notes';
+    header.style.cssText = `
+      padding: 8px 12px;
+      background: #f0f0f0;
+      font-weight: bold;
+      border-bottom: 1px solid #ddd;
+      cursor: move;
+      user-select: none;
+      border-radius: 8px 8px 0 0;
+    `;
     p.appendChild(header);
 
+    // Make panel draggable
+    let isDragging = false, startX, startY, initialLeft, initialTop;
+    header.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      initialLeft = parseInt(p.style.left) || window.innerWidth - 240;
+      initialTop = parseInt(p.style.top) || 80;
+      document.addEventListener('mousemove', dragMove);
+      document.addEventListener('mouseup', dragEnd);
+    });
+
+    const dragMove = (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      p.style.left = (initialLeft + dx) + 'px';
+      p.style.top = (initialTop + dy) + 'px';
+    };
+
+    const dragEnd = () => {
+      isDragging = false;
+      document.removeEventListener('mousemove', dragMove);
+      document.removeEventListener('mouseup', dragEnd);
+      saveGlobalState();
+    };
+
+    // Notes list container
     const list = document.createElement('div');
     list.className = 'notes-list';
+    list.style.cssText = 'padding: 10px; max-height: calc(70vh - 60px); overflow-y: auto;';
     p.appendChild(list);
 
+    // New Note button
     const newBtn = document.createElement('button');
     newBtn.textContent = '+ New Note';
-    newBtn.style.cssText = 'width:100%; padding:6px; margin-top:10px; background:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;';
+    newBtn.style.cssText = `
+      width: 100%;
+      padding: 8px;
+      margin-top: 10px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 0 0 8px 8px;
+      cursor: pointer;
+      font-weight: bold;
+    `;
     newBtn.addEventListener('click', () => {
       if (document.querySelectorAll('.sticky-bookmark-note').length >= MAX_NOTES) {
         alert(`Max ${MAX_NOTES} notes allowed.`);
         return;
       }
-      const note = createNote();
+      const note = createNote(null, null, null, null, null, null, '', nextColorIndex, false, 1.0);
+      nextColorIndex = (nextColorIndex + 1) % COLORS.length;
       overlay.appendChild(note);
       saveNotes();
-      updatePanel();
+      saveGlobalState();
+      if (isPanelOpen) updatePanel();
     });
     p.appendChild(newBtn);
 
@@ -82,15 +167,139 @@
     list.innerHTML = '';
     document.querySelectorAll('.sticky-bookmark-note').forEach(note => {
       const item = document.createElement('div');
-      item.style.cssText = 'padding:6px; margin:4px 0; background:#f0f0f0; border-radius:4px; cursor:pointer; font-size:12px;';
+      item.style.cssText = `
+        padding: 8px;
+        margin: 6px 0;
+        background: #f9f9f9;
+        border-radius: 6px;
+        cursor: pointer;
+        position: relative;
+        border: 1px solid #eee;
+      `;
+
       const titleEl = note.querySelector('.sticky-note-title');
-      item.textContent = titleEl.value || '(untitled)';
-      item.addEventListener('click', () => {
+      const noteTitle = titleEl.value || '(untitled)';
+      item.innerHTML = `
+        <div style="font-weight:500; font-size:13px;">${escapeHtml(noteTitle)}</div>
+        <div style="font-size:11px; color:#777; margin-top:2px;">Double-click to open</div>
+        <button class="kebab" style="position:absolute; top:8px; right:8px; background:none; border:none; font-size:18px; cursor:pointer;">⋯</button>
+      `;
+
+      const kebab = item.querySelector('.kebab');
+      kebab.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showNoteMenu(e, note, item);
+      });
+
+      item.addEventListener('dblclick', () => {
+        note.style.display = 'flex';
         note.scrollIntoView({ behavior: 'smooth', block: 'center' });
         note.style.boxShadow = '0 0 0 3px #00aaff';
         setTimeout(() => note.style.boxShadow = '2px 3px 10px rgba(0,0,0,0.3)', 1000);
       });
+
+      item.addEventListener('click', (e) => {
+        if (e.target === kebab) return;
+        // Single click: highlight
+        document.querySelectorAll('.sticky-bookmark-note').forEach(n => n.style.outline = 'none');
+        note.style.outline = '2px solid #00aaff';
+        setTimeout(() => note.style.outline = 'none', 1500);
+      });
+
       list.appendChild(item);
+    });
+  };
+
+  // Show note options menu
+  const showNoteMenu = (e, note, panelItem) => {
+    const menu = document.createElement('div');
+    menu.style.cssText = `
+      position: absolute;
+      top: ${e.clientY - panel.getBoundingClientRect().top + window.scrollY}px;
+      left: ${e.clientX - panel.getBoundingClientRect().left + window.scrollX - 150}px;
+      background: white;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+      padding: 8px;
+      z-index: 2147483649;
+      font-size: 13px;
+      min-width: 160px;
+    `;
+
+    const opacity = parseFloat(note.style.opacity) || 1.0;
+
+    menu.innerHTML = `
+      <div style="padding:6px 10px; cursor:pointer; border-radius:4px;" class="menu-open">🔍 Open Note</div>
+      <div style="padding:6px 10px; cursor:pointer; border-radius:4px;" class="menu-color">🎨 Change Color</div>
+      <div style="padding:6px 10px; cursor:pointer; border-radius:4px;" class="menu-opacity">💧 Transparency: ${Math.round(opacity * 100)}%</div>
+      <div style="padding:6px 10px; cursor:pointer; border-radius:4px; color:red;" class="menu-delete">🗑️ Delete Note</div>
+    `;
+
+    document.body.appendChild(menu);
+
+    // Close menu on outside click
+    const closeMenu = () => {
+      menu.remove();
+      document.removeEventListener('click', closeMenu);
+    };
+    setTimeout(() => document.addEventListener('click', closeMenu), 0);
+
+    // Menu actions
+    menu.querySelector('.menu-open').addEventListener('click', () => {
+      note.style.display = 'flex';
+      note.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      note.style.boxShadow = '0 0 0 3px #00aaff';
+      setTimeout(() => note.style.boxShadow = '2px 3px 10px rgba(0,0,0,0.3)', 1000);
+      closeMenu();
+    });
+
+    menu.querySelector('.menu-color').addEventListener('click', () => {
+      const colorPicker = document.createElement('select');
+      colorPicker.style.cssText = 'width:100%; padding:4px; margin-top:6px; border-radius:4px;';
+      COLORS.forEach((color, idx) => {
+        const opt = document.createElement('option');
+        opt.value = idx;
+        opt.textContent = `Color ${idx + 1}`;
+        if (note.style.backgroundColor === color) opt.selected = true;
+        colorPicker.appendChild(opt);
+      });
+
+      colorPicker.addEventListener('change', () => {
+        const idx = parseInt(colorPicker.value);
+        note.style.backgroundColor = COLORS[idx];
+        saveNotes();
+      });
+
+      menu.appendChild(colorPicker);
+    });
+
+    menu.querySelector('.menu-opacity').addEventListener('click', () => {
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = MIN_OPACITY * 100;
+      slider.max = MAX_OPACITY * 100;
+      slider.value = opacity * 100;
+      slider.step = 1;
+      slider.style.cssText = 'width:100%; margin-top:6px;';
+
+      slider.addEventListener('input', () => {
+        const val = parseFloat(slider.value) / 100;
+        note.style.opacity = val;
+        menu.querySelector('.menu-opacity').textContent = `💧 Transparency: ${slider.value}%`;
+        saveNotes();
+      });
+
+      menu.appendChild(slider);
+    });
+
+    menu.querySelector('.menu-delete').addEventListener('click', () => {
+      if (confirm('Delete this note permanently?')) {
+        note.remove();
+        saveNotes();
+        if (isPanelOpen) updatePanel();
+      }
+      closeMenu();
     });
   };
 
@@ -130,16 +339,6 @@
       cursor: 'pointer',
       fontSize: '18px'
     });
-    addButton.addEventListener('click', () => {
-      if (document.querySelectorAll('.sticky-bookmark-note').length >= MAX_NOTES) {
-        alert(`Max ${MAX_NOTES} notes allowed.`);
-        return;
-      }
-      const note = createNote();
-      overlay.appendChild(note);
-      saveNotes();
-      if (isPanelOpen) updatePanel();
-    });
 
     panelToggle = document.createElement('button');
     panelToggle.textContent = '▲ Notes';
@@ -153,6 +352,20 @@
       fontSize: '12px',
       whiteSpace: 'nowrap'
     });
+
+    addButton.addEventListener('click', () => {
+      if (document.querySelectorAll('.sticky-bookmark-note').length >= MAX_NOTES) {
+        alert(`Max ${MAX_NOTES} notes allowed.`);
+        return;
+      }
+      const note = createNote(null, null, null, null, null, null, '', nextColorIndex, false, 1.0);
+      nextColorIndex = (nextColorIndex + 1) % COLORS.length;
+      overlay.appendChild(note);
+      saveNotes();
+      saveGlobalState();
+      if (isPanelOpen) updatePanel();
+    });
+
     panelToggle.addEventListener('click', togglePanel);
 
     container.appendChild(addButton);
@@ -160,8 +373,15 @@
     document.body.appendChild(container);
   };
 
+  // Escape HTML for safe insertion
+  const escapeHtml = (str) => {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  };
+
   // Create a single note
-  const createNote = (id, left, top, width, height, content, title = '', colorIndex = 0, isCollapsed = false) => {
+  const createNote = (id, left, top, width, height, content, title = '', colorIndex = 0, isCollapsed = false, opacity = 1.0) => {
     const n = document.createElement('div');
     n.className = 'sticky-bookmark-note';
     n.dataset.id = id || 'note-' + Date.now();
@@ -169,8 +389,8 @@
 
     Object.assign(n.style, {
       position: 'absolute',
-      left: left || '50px',
-      top: top || '50px',
+      left: left || (50 + Math.random() * 100) + 'px',
+      top: top || (50 + Math.random() * 100) + 'px',
       width: width || '250px',
       minWidth: '150px',
       height: isCollapsed ? '30px' : (height || '200px'),
@@ -187,33 +407,26 @@
       flexDirection: 'column',
       fontSize: '14px',
       fontFamily: 'system-ui, sans-serif',
-      transition: 'height 0.2s ease'
+      transition: 'height 0.2s ease',
+      opacity: opacity
     });
 
     n.innerHTML = `
-      <div class="sticky-note-header" style="padding:6px 10px;background:rgba(255,255,255,0.3);border-bottom:1px solid rgba(0,0,0,0.1);display:flex;justify-content:space-between;align-items:center;cursor:move;border-radius:8px 8px 0 0;">
+      <div class="sticky-note-header" style="padding:6px 10px;background:rgba(255,255,255,0.4);border-bottom:1px solid rgba(0,0,0,0.1);display:flex;justify-content:space-between;align-items:center;cursor:move;border-radius:8px 8px 0 0;">
         <input class="sticky-note-title" type="text" placeholder="Note Title" value="${escapeHtml(title)}" style="flex:1; background:transparent; border:none; outline:none; font-weight:bold; font-size:13px; padding:2px 4px; margin-right:6px;"/>
         <div style="display:flex; align-items:center; gap:4px;">
-          <select class="color-picker" style="padding:2px 4px; border-radius:4px; border:1px solid #ccc; font-size:12px;">
-            ${COLORS.map((c, i) => `<option value="${i}" ${i === colorIndex ? 'selected' : ''}>Color ${i+1}</option>`).join('')}
-          </select>
           <button class="btn-toggle" style="background:none;border:none;font-size:16px;cursor:pointer;color:#555;" title="${isCollapsed ? 'Expand' : 'Collapse'}">${isCollapsed ? '▲' : '▼'}</button>
-          <button class="btn-close" style="background:none;border:none;font-size:18px;cursor:pointer;color:#555;" title="Close (hide)">✖</button>
-          <button class="btn-delete" style="background:none;border:none;font-size:18px;cursor:pointer;color:#555;" title="Delete permanently">🗑️</button>
+          <button class="btn-minimize" style="background:none;border:none;font-size:16px;cursor:pointer;color:#555;" title="Minimize">_</button>
         </div>
       </div>
       <div class="sticky-note-content" contenteditable="true" style="flex:1;padding:10px;outline:none;overflow:auto;resize:none;background:transparent;user-select:text;cursor:text;border:none;${isCollapsed ? 'display:none;' : ''}"></div>
-      <div class="resizer" style="position:absolute;bottom:0;right:0;width:16px;height:16px;background:rgba(0,0,0,0.1);cursor:se-resize;border-radius:0 0 8px 0;"></div>
     `;
 
     const header = n.querySelector('.sticky-note-header');
     const titleEl = n.querySelector('.sticky-note-title');
     const contentEl = n.querySelector('.sticky-note-content');
     const toggleBtn = n.querySelector('.btn-toggle');
-    const closeBtn = n.querySelector('.btn-close');
-    const deleteBtn = n.querySelector('.btn-delete');
-    const colorPicker = n.querySelector('.color-picker');
-    const resizer = n.querySelector('.resizer');
+    const minimizeBtn = n.querySelector('.btn-minimize');
 
     // Load content if provided
     if (content) contentEl.innerHTML = content;
@@ -222,44 +435,26 @@
     // Toggle collapse/expand
     toggleBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const isNowCollapsed = !isCollapsed;
-      n.style.height = isNowCollapsed ? '30px' : '200px';
-      n.style.minHeight = isNowCollapsed ? '30px' : '150px';
-      contentEl.style.display = isNowCollapsed ? 'none' : 'block';
-      toggleBtn.textContent = isNowCollapsed ? '▲' : '▼';
-      toggleBtn.title = isNowCollapsed ? 'Expand' : 'Collapse';
-      isCollapsed = isNowCollapsed;
+      isCollapsed = !isCollapsed;
+      n.style.height = isCollapsed ? '30px' : '200px';
+      n.style.minHeight = isCollapsed ? '30px' : '150px';
+      contentEl.style.display = isCollapsed ? 'none' : 'block';
+      toggleBtn.textContent = isCollapsed ? '▲' : '▼';
+      toggleBtn.title = isCollapsed ? 'Expand' : 'Collapse';
       saveNotes();
     });
 
-    // Close (hide) note
-    closeBtn.addEventListener('click', (e) => {
+    // Minimize (hide) note
+    minimizeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       n.style.display = 'none';
       if (isPanelOpen) updatePanel();
     });
 
-    // Delete permanently
-    deleteBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (confirm('Delete this note permanently?')) {
-        n.remove();
-        saveNotes();
-        if (isPanelOpen) updatePanel();
-      }
-    });
-
-    // Color picker
-    colorPicker.addEventListener('change', () => {
-      const idx = parseInt(colorPicker.value);
-      n.style.backgroundColor = COLORS[idx % COLORS.length];
-      saveNotes();
-    });
-
     // Draggable
     let isDragging = false, startX, startY, initialLeft, initialTop;
     header.addEventListener('mousedown', (e) => {
-      if (e.target.closest('button') || e.target === titleEl || e.target === colorPicker) return;
+      if (e.target.closest('button') || e.target === titleEl) return;
       e.preventDefault();
       isDragging = true;
       startX = e.clientX;
@@ -285,37 +480,72 @@
       saveNotes();
     };
 
-    // Resizable
-    let isResizing = false, startWidth, startHeight;
-    resizer.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      isResizing = true;
-      startX = e.clientX;
-      startY = e.clientY;
-      startWidth = parseInt(n.style.width);
-      startHeight = parseInt(n.style.height);
-      document.addEventListener('mousemove', onResizeMove);
-      document.addEventListener('mouseup', onResizeEnd);
-    });
+    // Resizers (left, bottom, right)
+    const addResizer = (dir, cursorStyle) => {
+      const resizer = document.createElement('div');
+      resizer.className = `resizer-${dir}`;
+      Object.assign(resizer.style, {
+        position: 'absolute',
+        cursor: cursorStyle,
+        zIndex: 2147483648
+      });
 
-    const onResizeMove = (e) => {
-      if (!isResizing) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      const newWidth = Math.max(150, startWidth + dx);
-      const newHeight = Math.max(150, startHeight + dy);
-      if (!isCollapsed) {
-        n.style.width = newWidth + 'px';
-        n.style.height = newHeight + 'px';
+      if (dir === 'left') {
+        resizer.style.cssText += 'top: 0; left: 0; width: 6px; height: 100%;';
+      } else if (dir === 'bottom') {
+        resizer.style.cssText += 'bottom: 0; left: 6px; right: 6px; height: 6px;';
+      } else if (dir === 'right') {
+        resizer.style.cssText += 'top: 0; right: 0; width: 6px; height: 100%;';
       }
+
+      let isResizing = false, startValue, startSize;
+      resizer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        isResizing = true;
+        if (dir === 'left' || dir === 'right') {
+          startValue = e.clientX;
+          startSize = parseFloat(n.style.width);
+        } else {
+          startValue = e.clientY;
+          startSize = parseFloat(n.style.height);
+        }
+        document.addEventListener('mousemove', resizeMove);
+        document.addEventListener('mouseup', resizeEnd);
+      });
+
+      const resizeMove = (e) => {
+        if (!isResizing) return;
+        let delta = (dir === 'left' || dir === 'bottom') ? startValue - (dir === 'left' ? e.clientX : e.clientY) : e.clientX - startValue;
+        let newSize = startSize + delta;
+
+        if (dir === 'left' || dir === 'right') {
+          newSize = Math.max(150, newSize);
+          n.style.width = newSize + 'px';
+          if (dir === 'left') {
+            const newLeft = initialLeft - delta;
+            n.style.left = newLeft + 'px';
+          }
+        } else {
+          newSize = Math.max(isCollapsed ? 30 : 150, newSize);
+          n.style.height = newSize + 'px';
+        }
+      };
+
+      const resizeEnd = () => {
+        isResizing = false;
+        document.removeEventListener('mousemove', resizeMove);
+        document.removeEventListener('mouseup', resizeEnd);
+        saveNotes();
+      };
+
+      n.appendChild(resizer);
     };
 
-    const onResizeEnd = () => {
-      isResizing = false;
-      document.removeEventListener('mousemove', onResizeMove);
-      document.removeEventListener('mouseup', onResizeEnd);
-      saveNotes();
-    };
+    ['left', 'bottom', 'right'].forEach(dir => {
+      const cursor = dir === 'left' || dir === 'right' ? 'ew-resize' : 'ns-resize';
+      addResizer(dir, cursor);
+    });
 
     // Auto-save on edit
     let saveTimeout;
@@ -350,20 +580,14 @@
     return n;
   };
 
-  // Escape HTML for safe insertion
-  const escapeHtml = (str) => {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-  };
-
   // Save all notes to localStorage
   const saveNotes = () => {
     const notes = document.querySelectorAll('.sticky-bookmark-note');
     const data = Array.from(notes).map(n => {
       const titleEl = n.querySelector('.sticky-note-title');
       const contentEl = n.querySelector('.sticky-note-content');
-      const colorPicker = n.querySelector('.color-picker');
+      const bgColor = n.style.backgroundColor;
+      const colorIndex = COLORS.indexOf(bgColor) !== -1 ? COLORS.indexOf(bgColor) : 0;
       return {
         id: n.dataset.id,
         left: n.style.left,
@@ -372,11 +596,13 @@
         height: n.style.height,
         content: contentEl.innerHTML,
         title: titleEl.value,
-        colorIndex: parseInt(colorPicker.value),
-        isCollapsed: contentEl.style.display === 'none'
+        colorIndex,
+        isCollapsed: contentEl.style.display === 'none',
+        opacity: parseFloat(n.style.opacity) || 1.0
       };
     });
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    saveGlobalState(); // also saves nextColorIndex
   };
 
   // Load notes from localStorage
@@ -397,11 +623,10 @@
     style.textContent = `
       .sticky-bookmark-overlay { position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:2147483647; }
       .sticky-bookmark-note { position:absolute; min-width:150px; min-height:30px; border-radius:8px; box-shadow:2px 3px 10px rgba(0,0,0,0.3); padding:0; pointer-events:auto; cursor:default; user-select:none; z-index:2147483647; display:flex; flex-direction:column; font-size:14px; font-family:system-ui,sans-serif; transition: height 0.2s ease; }
-      .sticky-note-header { padding:6px 10px; background:rgba(255,255,255,0.3); border-bottom:1px solid rgba(0,0,0,0.1); display:flex; justify-content:space-between; align-items:center; cursor:move; border-radius:8px 8px 0 0; }
-      .sticky-note-header button { background:none; border:none; font-size:18px; cursor:pointer; color:#555; margin-left:6px; padding:2px; }
+      .sticky-note-header { padding:6px 10px; background:rgba(255,255,255,0.4); border-bottom:1px solid rgba(0,0,0,0.1); display:flex; justify-content:space-between; align-items:center; cursor:move; border-radius:8px 8px 0 0; }
+      .sticky-note-header button { background:none; border:none; font-size:16px; cursor:pointer; color:#555; padding:2px 4px; }
       .sticky-note-content { flex:1; padding:10px; outline:none; overflow:auto; resize:none; background:transparent; user-select:text; cursor:text; border:none; }
-      .resizer { position:absolute; bottom:0; right:0; width:16px; height:16px; background:rgba(0,0,0,0.1); cursor:se-resize; border-radius:0 0 8px 0; }
-      .sticky-notes-panel { position:fixed; top:60px; right:20px; width:200px; max-height:70vh; background:#fafafa; border:1px solid #ddd; border-radius:8px; box-shadow:0 2px 10px rgba(0,0,0,0.15); padding:10px; overflow-y:auto; z-index:2147483648; pointer-events:auto; display:none; font-size:13px; font-family:system-ui,sans-serif; }
+      .sticky-notes-panel { position:fixed; top:80px; right:20px; width:220px; max-height:70vh; background:#fafafa; border:1px solid #ddd; border-radius:8px; box-shadow:0 2px 10px rgba(0,0,0,0.15); padding:0; overflow:hidden; z-index:2147483648; pointer-events:auto; display:none; font-size:13px; font-family:system-ui,sans-serif; }
     `;
     document.head.appendChild(style);
   };
@@ -413,6 +638,7 @@
     injectStyles();
     overlay = createOverlay();
     createFloatingControls();
+    loadGlobalState();
 
     const savedNotes = loadNotes();
     savedNotes.forEach(noteData => {
@@ -425,7 +651,8 @@
         noteData.content,
         noteData.title,
         noteData.colorIndex,
-        noteData.isCollapsed
+        noteData.isCollapsed,
+        noteData.opacity
       );
       overlay.appendChild(note);
     });
